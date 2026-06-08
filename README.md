@@ -1,3 +1,7 @@
+> [!WARNING]
+> The following is a prototype, reference implementation, and proof-of-concept. This open source code is provided for research, experimentation, and developer education only. This code has not been audited, is actively experimental, and may contain bugs, vulnerabilities, or incomplete features. Use at your own risk.
+
+
 # playground-constellation
 
 A live big-screen constellation of Polkadot Playground activity for the Web3 Summit Developer Lab. Visualizes every deploy, mod, and star on the registry contract as a force-directed star map — pinned tutorials anchor the sky, builder nodes orbit their apps, mod descent forms constellation lines, and each new event arcs across the canvas as a shooting star with a sparkling tail.
