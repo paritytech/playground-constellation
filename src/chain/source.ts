@@ -74,4 +74,12 @@ export interface ConstellationHandlers {
 export interface ConstellationSource {
   loadSnapshot?(onProgress?: (p: LoadProgress) => void): Promise<GraphSnapshot>;
   subscribe(handlers: ConstellationHandlers): () => void;
+  /**
+   * The on-chain registry address this source reads from. Used to scope the
+   * localStorage cache by contract identity, so a registry redeploy (the live
+   * address changes) lands in a fresh cache namespace instead of merging stale
+   * nodes from the previous deployment. Only the chain source implements this;
+   * mock/demo sources omit it (their data isn't cached).
+   */
+  getRegistryAddress?(): Promise<string>;
 }

@@ -13,7 +13,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import type { ChainMode } from "./client.ts";
+import { getChainHandle, type ChainMode } from "./client.ts";
 import { subscribeLive } from "./live.ts";
 import { loadSnapshot } from "./reads.ts";
 import type { ConstellationSource } from "./source.ts";
@@ -27,5 +27,9 @@ export function createChainSource(mode: ChainMode): ConstellationSource {
   return {
     loadSnapshot: (onProgress) => loadSnapshot(mode, onProgress),
     subscribe: (handlers) => subscribeLive(mode, handlers),
+    // Reuses the memoized chain handle (same one loadSnapshot/subscribe use),
+    // so this adds no extra connection — it just surfaces the live-resolved
+    // registry address for cache scoping.
+    getRegistryAddress: async () => (await getChainHandle(mode)).registryAddress,
   };
 }
