@@ -14,7 +14,7 @@
 // limitations under the License.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { saveGraph, loadGraph, saveFeed, loadFeed } from "./chain/cache.ts";
+import { saveGraph, loadGraph, saveFeed, loadFeed, dropStaleScopes } from "./chain/cache.ts";
 import { selectSources, type SourceMode } from "./chain/select.ts";
 import type {
   ConstellationHandlers,
@@ -57,6 +57,11 @@ import { TopStrip } from "./ui/TopStrip.tsx";
 // larger screens show more without leaving empty space at the bottom.
 const FEED_SIZE = 24;
 const CACHE_THROTTLE_MS = 3000;
+// Cold-load retry backoff. An unattended kiosk retries a failed chain connect
+// (e.g. the live registry address can't be resolved from the meta-registry)
+// instead of bricking, capped so it never hammers the RPC.
+const RETRY_BASE_MS = 2000;
+const RETRY_MAX_MS = 30000;
 // Ticker pool: how many recent items the idle rotation draws from.
 const TICKER_POOL_LIMIT = 48;
 // Ambient gold comets fire on this jittered cadence — but only when the chain
@@ -153,9 +158,18 @@ export function App() {
     let cancelled = false;
     const { primary, mode, auxiliary } = selectSources();
     setMode(mode);
+    console.info(
+      `[constellation] data source mode=${mode}`,
+      mode === "live"
+        ? "(reading the chain — see the registry address log below)"
+        : `(NOT reading the chain — ${mode === "mock" ? "synthetic mock data" : "scripted demo data"}; counts are not from any contract)`,
+    );
 
-    // Only persist/restore real chain data, scoped so mock never pollutes live.
-    const cacheScope = mode === "live" ? "live" : null;
+    // Only persist/restore real chain data. Scoped by the live registry address
+    // (resolved below, `live:<addr>`) so mock never pollutes live AND a registry
+    // redeploy lands in a fresh namespace rather than merging stale nodes. Stays
+    // null in mock/demo and until the address resolves; saves are no-ops until then.
+    let cacheScope: string | null = null;
 
     const pushEntries = (next: FeedEntry[]) => {
       entriesRef.current = next;
@@ -183,25 +197,6 @@ export function App() {
       return graphRef.current.nodes.has(lower) ? lower : null;
     };
 
-    if (cacheScope) {
-      const cached = loadGraph(cacheScope);
-      if (cached) {
-        // Scrub any excluded nodes a pre-filter cache may still hold, so e2e
-        // apps can't flash on the instant-paint before the snapshot lands.
-        filterGraph(cached);
-        graphRef.current = cached;
-        versionRef.current += 1; // paint cache instantly
-        setTotals(computeTotals(cached));
-      }
-      const cachedFeed = loadFeed(cacheScope);
-      if (cachedFeed?.length) {
-        // Drop any excluded-domain rows a pre-filter cache may still hold (the
-        // target label is the app domain for app-targeted events).
-        const clean = cachedFeed.filter((e) => !isExcludedDomain(e.line.targetLabel));
-        if (clean.length) pushEntries(clean.slice(0, FEED_SIZE));
-      }
-    }
-
     const maybeSave = () => {
       if (!cacheScope) return;
       const now = Date.now();
@@ -212,7 +207,42 @@ export function App() {
       }
     };
 
-    (async () => {
+    const loadSnapshotAndPaint = async () => {
+      // Resolve the address-scoped cache key (live mode only), then instant-paint
+      // from that scope before the snapshot lands. Scoping by the live registry
+      // address means a contract swap reads an empty namespace — stale nodes from
+      // a previous deployment can never bleed into the new contract's view.
+      if (mode === "live" && primary.getRegistryAddress) {
+        try {
+          const addr = await primary.getRegistryAddress();
+          if (cancelled) return;
+          cacheScope = `live:${addr.toLowerCase()}`;
+          dropStaleScopes(cacheScope); // evict prior deployments + the old unscoped key
+          const cached = loadGraph(cacheScope);
+          if (cached) {
+            // Scrub any excluded nodes a pre-filter cache may still hold, so e2e
+            // apps can't flash on the instant-paint before the snapshot lands.
+            filterGraph(cached);
+            graphRef.current = cached;
+            versionRef.current += 1; // paint cache instantly
+            setTotals(computeTotals(cached));
+          }
+          const cachedFeed = loadFeed(cacheScope);
+          if (cachedFeed?.length) {
+            // Drop any excluded-domain rows a pre-filter cache may still hold (the
+            // target label is the app domain for app-targeted events).
+            const clean = cachedFeed.filter((e) => !isExcludedDomain(e.line.targetLabel));
+            if (clean.length) pushEntries(clean.slice(0, FEED_SIZE));
+          }
+        } catch (err) {
+          // Address resolution failed — paint nothing from cache this attempt and
+          // let the snapshot below govern. Logged so an on-site operator can tell
+          // "no cache" apart from a slow cold start. (If the snapshot then also
+          // fails, connect() retries the whole thing.)
+          console.warn("[constellation] registry address resolution failed; cache disabled this attempt", err);
+        }
+      }
+
       if (!primary.loadSnapshot) {
         setLive(true);
         return;
@@ -231,7 +261,7 @@ export function App() {
         saveGraph(graphRef.current, cacheScope);
         saveFeed(entriesRef.current, cacheScope);
       }
-    })();
+    };
 
     const handlers: ConstellationHandlers = {
       onEvent: ({ event, ts }) => {
@@ -304,8 +334,38 @@ export function App() {
       },
     };
 
-    const unsubs: Array<() => void> = [primary.subscribe(handlers)];
-    for (const aux of auxiliary) unsubs.push(aux.subscribe(handlers));
+    let unsubs: Array<() => void> = [];
+    const wireSubscriptions = () => {
+      unsubs = [primary.subscribe(handlers), ...auxiliary.map((aux) => aux.subscribe(handlers))];
+    };
+
+    // Cold-load, then subscribe. On failure — most notably when the live registry
+    // address can't be resolved from the meta-registry (a hard error by design,
+    // never a silent fall back to stale data) — retry with capped backoff instead
+    // of bricking, so an unattended kiosk recovers from a transient chain hiccup on
+    // its own. "CONNECTING" stays shown until a load succeeds. Subscribing only
+    // AFTER a successful snapshot keeps a failed attempt from leaving a dead or
+    // duplicate subscription (cost: live events during the cold-load window aren't
+    // fed; the snapshot already reflects current state and the gap self-corrects).
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let retryAttempt = 0;
+    const connect = async () => {
+      try {
+        await loadSnapshotAndPaint();
+        if (cancelled) return;
+        wireSubscriptions();
+      } catch (err) {
+        if (cancelled) return;
+        const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** retryAttempt);
+        retryAttempt += 1;
+        console.error(`[constellation] chain load failed; retrying in ${Math.round(delay / 1000)}s`, err);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          void connect();
+        }, delay);
+      }
+    };
+    void connect();
 
     // Ambient gold comets: a slow heartbeat that keeps the sky drifting during
     // quiet stretches. Skipped while live events are flowing (last < 4s ago).
@@ -327,6 +387,7 @@ export function App() {
     return () => {
       cancelled = true;
       if (ambientTimer !== null) clearTimeout(ambientTimer);
+      if (retryTimer !== null) clearTimeout(retryTimer);
       for (const u of unsubs) u();
     };
   }, []);

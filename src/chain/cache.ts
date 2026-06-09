@@ -17,9 +17,35 @@ import type { FeedEntry } from "../model/format.ts";
 import type { Graph, GraphEdge, GraphNode } from "../model/graph.ts";
 import { createGraph } from "../model/graph.ts";
 
-const keyFor = (scope: string) => `constellation.graph.${scope}`;
-const feedKeyFor = (scope: string) => `constellation.feed.${scope}`;
+const GRAPH_PREFIX = "constellation.graph.";
+const FEED_PREFIX = "constellation.feed.";
+const keyFor = (scope: string) => `${GRAPH_PREFIX}${scope}`;
+const feedKeyFor = (scope: string) => `${FEED_PREFIX}${scope}`;
 const LEGACY_KEY = "constellation.graph.v1";
+
+/**
+ * Drop every cached graph/feed whose scope isn't `keepScope`. The cache is now
+ * scoped by the live registry address (`live:<addr>`), so a registry redeploy
+ * orphans the previous deployment's entries — and the old unscoped `live` key
+ * from before this scoping existed. Called once on load (live mode only) to
+ * keep localStorage from accumulating dead snapshots across contract changes.
+ */
+export function dropStaleScopes(keepScope: string): void {
+  try {
+    const keep = new Set([keyFor(keepScope), feedKeyFor(keepScope)]);
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if ((key.startsWith(GRAPH_PREFIX) || key.startsWith(FEED_PREFIX)) && !keep.has(key)) {
+        doomed.push(key);
+      }
+    }
+    for (const key of doomed) localStorage.removeItem(key);
+  } catch {
+    // best-effort
+  }
+}
 
 interface CachePayload {
   nodes: GraphNode[];

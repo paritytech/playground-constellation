@@ -135,5 +135,11 @@ export function withExcludedDomains(source: ConstellationSource): ConstellationS
     wrapped.loadSnapshot = async (onProgress) => filterSnapshot(await inner(onProgress));
   }
 
+  // Exclusion doesn't change which registry we read from — pass it straight
+  // through so the cache stays scoped to the live contract address.
+  if (source.getRegistryAddress) {
+    wrapped.getRegistryAddress = source.getRegistryAddress.bind(source);
+  }
+
   return wrapped;
 }

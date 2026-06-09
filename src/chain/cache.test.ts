@@ -15,7 +15,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { applySnapshot, createGraph, type GraphSnapshot } from "../model/graph.ts";
-import { loadGraph, saveGraph } from "./cache.ts";
+import { dropStaleScopes, loadGraph, saveFeed, saveGraph } from "./cache.ts";
 
 const ALICE = "0x" + "a1".repeat(20);
 
@@ -51,5 +51,33 @@ describe("graph cache", () => {
   it("survives corrupt JSON without throwing", () => {
     localStorage.setItem("constellation.graph.v1", "{not json");
     expect(loadGraph()).toBeNull();
+  });
+
+  it("scopes by registry address — different scopes don't collide", () => {
+    const keep = "live:0xnew";
+    saveGraph(seeded(), keep);
+    saveGraph(createGraph(), "live:0xold");
+    expect(loadGraph(keep)?.nodes.get("ballot.dot")?.stars).toBe(3);
+    expect(loadGraph("live:0xold")?.nodes.size).toBe(0);
+  });
+
+  it("dropStaleScopes evicts other scopes (incl. the old unscoped key) but keeps the current one", () => {
+    saveGraph(seeded(), "live:0xnew");
+    saveFeed([], "live:0xnew");
+    saveGraph(seeded(), "live:0xold"); // a previous deployment
+    saveGraph(seeded(), "live"); // the legacy unscoped key
+    localStorage.setItem("constellation.graph.v1", "{}"); // legacy v1 key
+
+    dropStaleScopes("live:0xnew");
+
+    // Assert via raw getItem BEFORE any loadGraph() — loadGraph removes the legacy
+    // v1 key as a side-effect, which would otherwise mask whether dropStaleScopes
+    // itself removed it. These prove dropStaleScopes did the eviction.
+    expect(localStorage.getItem("constellation.graph.v1")).toBeNull();
+    expect(localStorage.getItem("constellation.graph.live")).toBeNull();
+    expect(localStorage.getItem("constellation.graph.live:0xold")).toBeNull();
+    // The kept scope (graph + feed) survives and still round-trips.
+    expect(localStorage.getItem("constellation.feed.live:0xnew")).not.toBeNull();
+    expect(loadGraph("live:0xnew")?.nodes.get("ballot.dot")?.stars).toBe(3);
   });
 });

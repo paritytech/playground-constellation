@@ -14,7 +14,7 @@
 // limitations under the License.
 
 import { getChainAPI } from "@parity/product-sdk-chain-client";
-import { ContractManager, createContractRuntimeFromClient, type CdmJson } from "@parity/product-sdk-contracts";
+import { ContractManager, type CdmJson } from "@parity/product-sdk-contracts";
 import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { seedToAccount } from "@parity/product-sdk-keys";
 import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
@@ -58,12 +58,42 @@ async function build(mode: ChainMode): Promise<ChainHandle> {
     raw = createClient(getWsProvider(ASSET_HUB_WS));
     api = raw.getTypedApi(paseo_asset_hub);
   }
-  const runtime = createContractRuntimeFromClient(raw, paseo_asset_hub);
-  const manager = new ContractManager(cdmJson as unknown as CdmJson, runtime, {
-    defaultOrigin: readOrigin(),
-  });
+  // Resolve the registry address LIVE from the on-chain CDM meta-registry
+  // (cdm.json.registry) rather than trusting the pinned snapshot address. The
+  // snapshot still supplies the ABI; only the address is resolved fresh, so the
+  // kiosk always reads the latest deployed registry even when cdm.json is stale.
+  // Mirrors playground-cli's registry access. Read-only here, so no signer is
+  // wired in. fromLiveClient performs a getAddress dry-run against the meta-
+  // registry; if that fails we throw rather than silently fall back to the
+  // (possibly stale) snapshot address.
+  let manager: ContractManager;
+  try {
+    manager = await ContractManager.fromLiveClient(cdmJson as unknown as CdmJson, raw, paseo_asset_hub, {
+      libraries: [REGISTRY_PACKAGE],
+      defaultOrigin: readOrigin(),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `MetaRegistryFailure: could not resolve the live ${REGISTRY_PACKAGE} address from the CDM meta-registry. Refusing the cdm.json snapshot because it may be stale. ${msg}`,
+      { cause: err instanceof Error ? err : undefined },
+    );
+  }
   const registry = manager.getContract(REGISTRY_PACKAGE) as unknown as RegistryContract;
   const registryAddress = manager.getAddress(REGISTRY_PACKAGE) as string;
+  // Diagnostic: which contract are we actually reading from? The live address is
+  // the source of truth (uniquely identifies the deployment); the cdm.json
+  // `version` is only the bundled ABI snapshot and may lag the live deployment.
+  const snapshot = (cdmJson as { registry?: string; contracts?: Record<string, { version?: number; address?: string }> });
+  const pinned = snapshot.contracts?.[REGISTRY_PACKAGE];
+  console.info(
+    `[constellation] reading ${REGISTRY_PACKAGE} (mode=${mode}) → live address ${registryAddress}`,
+    `| cdm.json snapshot: v${pinned?.version} @ ${pinned?.address}`,
+    `| meta-registry ${snapshot.registry}`,
+    registryAddress.toLowerCase() === pinned?.address?.toLowerCase()
+      ? "(live matches snapshot)"
+      : "(live DIFFERS from snapshot — snapshot is stale)",
+  );
   return { api, registry, registryAddress };
 }
 
@@ -71,7 +101,16 @@ async function build(mode: ChainMode): Promise<ChainHandle> {
 export function getChainHandle(mode: ChainMode): Promise<ChainHandle> {
   let h = handles.get(mode);
   if (!h) {
-    h = build(mode);
+    // Don't cache a rejected handle. `build` can now fail at the live
+    // meta-registry resolution (fromLiveClient), and a transient hiccup there
+    // would otherwise poison this cache forever — every later consumer
+    // (loadSnapshot, subscribe, highlights, getRegistryAddress) would await the
+    // same permanently-rejected promise with no way to retry. Drop it on failure
+    // so the next call rebuilds and the kiosk can recover on its own.
+    h = build(mode).catch((err) => {
+      handles.delete(mode);
+      throw err;
+    });
     handles.set(mode, h);
   }
   return h;
