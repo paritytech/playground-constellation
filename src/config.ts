@@ -35,6 +35,19 @@ export const REGISTRY_PACKAGE =
   (import.meta.env?.VITE_PLAYGROUND_REGISTRY_PACKAGE as string | undefined) ||
   "@w3s/playground-registry";
 
+/**
+ * Summit ("w3s") CDM meta-registry address. The meta-registry maps
+ * `REGISTRY_PACKAGE` to its live on-chain address, and it is ENV-SPECIFIC:
+ * paseo's is `0xf62c2ece…`, summit's is the one below. cdm.json's top-level
+ * `registry` is "just whatever `cdm i` baked for one env" (currently the paseo
+ * value), so reading from it on the summit chain resolves the wrong (empty)
+ * meta-registry and the kiosk shows no apps. Since constellation is summit-only
+ * (CHAIN above), we inject this explicitly instead — mirroring playground-cli's
+ * per-env resolution. Source of truth: `@parity/cdm-env` getRegistryAddress("w3s").
+ */
+export const REGISTRY_META_ADDRESS =
+  "0xa5747e60ae27f93e92019e4021abfc4957050141";
+
 function envList(value: string | undefined): string[] | null {
   if (!value) return null;
   const parts = value.split(",").map((s) => s.trim()).filter(Boolean);
