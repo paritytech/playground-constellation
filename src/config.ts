@@ -13,15 +13,78 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import type { devnet_asset_hub } from "@parity/product-sdk-descriptors/devnet-asset-hub";
+import type { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
+
+/** Union of the asset-hub descriptors this build can target. The imports are
+ *  type-only so their metadata never enters the main chunk; the runtime
+ *  import() inside NETWORK.loadDescriptor is the only value reference, so each
+ *  network's metadata code-splits into its own lazy chunk. */
+export type AssetHubDescriptor = typeof devnet_asset_hub | typeof paseo_asset_hub;
+
+interface NetworkConfig {
+  /** Human label for the selected network. */
+  label: string;
+  /** getChainAPI preset (host-routed). */
+  chain: "paseo" | "devnet";
+  /** Asset Hub WS for the DEV-ONLY direct-RPC mode (VITE_USE_DIRECT=1). */
+  assetHubWs: string;
+  /** ENV-SPECIFIC CDM meta-registry address (see REGISTRY_META_ADDRESS). */
+  registryMeta: string;
+  loadDescriptor(): Promise<AssetHubDescriptor>;
+}
+
+// `import.meta.env.VITE_NETWORK` is inlined as a literal at build time, so this
+// comparison folds and only the selected network's asset-hub metadata chunk
+// ships. Keep it a direct literal comparison; routing the choice through a
+// lookup table or a normalizing helper leaves both import()s reachable, so the
+// build emits both networks' metadata chunks.
+export const NETWORK: NetworkConfig =
+  import.meta.env.VITE_NETWORK === "devnet"
+    ? {
+        label: "Devnet (Paseo testnet)",
+        chain: "devnet",
+        assetHubWs: "wss://asset-hub-paseo-rpc.n.dwellir.com",
+        registryMeta: "0x59b0245778917af55224e5f8fb55f7f8d452619f",
+        loadDescriptor: async () =>
+          (await import("@parity/product-sdk-descriptors/devnet-asset-hub"))
+            .devnet_asset_hub,
+      }
+    : {
+        label: "Paseo Next",
+        chain: "paseo",
+        assetHubWs: "wss://paseo-asset-hub-next-rpc.polkadot.io",
+        registryMeta: "0xf62c2ece29cd8df2e10040ecfa5a894a5c5d9cb0",
+        loadDescriptor: async () =>
+          (await import("@parity/product-sdk-descriptors/paseo-asset-hub"))
+            .paseo_asset_hub,
+      };
+
+// Dev only: a typo'd VITE_NETWORK silently falls back to paseo-next, so surface
+// it while developing. Kept out of the selection above to preserve the fold.
+if (import.meta.env.DEV) {
+  const configured = import.meta.env.VITE_NETWORK;
+  if (
+    configured &&
+    configured !== "devnet" &&
+    configured !== "paseo" &&
+    configured !== "paseo-next"
+  ) {
+    console.warn(
+      `[constellation] Unknown VITE_NETWORK "${configured}", falling back to paseo-next`,
+    );
+  }
+}
+
 /** Chain preset passed to getChainAPI (host-routed). */
-export const CHAIN = "summit" as const;
+export const CHAIN = NETWORK.chain;
 
 /**
  * Asset Hub WS endpoint for the DEV-ONLY direct-RPC mode (VITE_USE_DIRECT=1),
  * used to view real data in a plain browser outside the host. The production
- * path inside Polkadot Desktop never uses this — it routes through the host.
+ * path inside Polkadot Desktop never uses this; it routes through the host.
  */
-export const ASSET_HUB_WS = "wss://summit-asset-hub-rpc.polkadot.io";
+export const ASSET_HUB_WS = NETWORK.assetHubWs;
 
 /**
  * Max nodes kept in the live graph. Bounds memory, the localStorage cache,
@@ -36,17 +99,15 @@ export const REGISTRY_PACKAGE =
   "@w3s/playground-registry";
 
 /**
- * Summit ("w3s") CDM meta-registry address. The meta-registry maps
- * `REGISTRY_PACKAGE` to its live on-chain address, and it is ENV-SPECIFIC:
- * paseo's is `0xf62c2ece…`, summit's is the one below. cdm.json's top-level
- * `registry` is "just whatever `cdm i` baked for one env" (currently the paseo
- * value), so reading from it on the summit chain resolves the wrong (empty)
- * meta-registry and the kiosk shows no apps. Since constellation is summit-only
- * (CHAIN above), we inject this explicitly instead — mirroring playground-cli's
- * per-env resolution. Source of truth: `@parity/cdm-env` getRegistryAddress("w3s").
+ * CDM meta-registry address for the selected network. The meta-registry maps
+ * `REGISTRY_PACKAGE` to its live on-chain address, and it is ENV-SPECIFIC.
+ * cdm.json's top-level `registry` is "just whatever `cdm i` baked for one env",
+ * so reading from it on the wrong chain resolves an empty meta-registry and the
+ * kiosk shows no apps. We inject the network's meta-registry explicitly instead,
+ * mirroring playground-cli's per-env resolution. Source of truth:
+ * `@parity/cdm-env` getRegistryAddress(<network>).
  */
-export const REGISTRY_META_ADDRESS =
-  "0xa5747e60ae27f93e92019e4021abfc4957050141";
+export const REGISTRY_META_ADDRESS = NETWORK.registryMeta;
 
 function envList(value: string | undefined): string[] | null {
   if (!value) return null;

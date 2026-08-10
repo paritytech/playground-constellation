@@ -102,9 +102,10 @@ Copy `.env.example` to `.env.local` and tweak as needed.
 
 | Variable | Effect |
 |---|---|
+| `VITE_NETWORK` | Network the kiosk targets, chosen at build time. Default `paseo` (Paseo Next v2); set `devnet` for the public products devnet on the Paseo testnet Asset Hub. Vite inlines it, so switching needs a rebuild. |
 | `VITE_USE_DEMO=1` | Force demo mode at build time (same effect as `?demo=1`) |
 | `VITE_USE_MOCK=1` | Force synthetic mock data |
-| `VITE_USE_DIRECT=1` | Connect directly to Paseo Asset Hub (`wss://paseo-asset-hub-next-rpc.polkadot.io`) instead of routing through the host |
+| `VITE_USE_DIRECT=1` | Connect directly to the selected network's Asset Hub RPC instead of routing through the host |
 | `VITE_PLAYGROUND_REGISTRY_PACKAGE` | Override the registry package name (default `@w3s/playground-registry`) |
 
 ## Security
