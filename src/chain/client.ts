@@ -15,17 +15,16 @@
 
 import { getChainAPI } from "@parity/product-sdk-chain-client";
 import { ContractManager, type CdmJson } from "@parity/product-sdk-contracts";
-import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { ss58Encode } from "@parity/product-sdk-address";
 import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
 import cdmJson from "../../cdm.json" with { type: "json" };
-import { ASSET_HUB_WS, CHAIN, REGISTRY_META_ADDRESS, REGISTRY_PACKAGE } from "../config.ts";
+import { ASSET_HUB_WS, CHAIN, NETWORK, REGISTRY_META_ADDRESS, REGISTRY_PACKAGE, type AssetHubDescriptor } from "../config.ts";
 import type { IndividualityClient } from "./peopleIdentity.ts";
 import type { QueryResult, RegistryContract } from "./registryContract.ts";
 
 export type ChainMode = "host" | "direct";
-type AssetHubApi = TypedApi<typeof paseo_asset_hub>;
+type AssetHubApi = TypedApi<AssetHubDescriptor>;
 
 export interface ChainHandle {
   api: AssetHubApi;
@@ -59,6 +58,9 @@ async function build(mode: ChainMode): Promise<ChainHandle> {
   let api: AssetHubApi;
   // Host-routed People-chain client for username resolution; null in direct mode.
   let individuality: IndividualityClient | null = null;
+  // The selected network's asset-hub descriptor (paseo or devnet), loaded
+  // lazily so only the selected metadata chunk ships. See NETWORK in config.ts.
+  const descriptor = await NETWORK.loadDescriptor();
   if (mode === "host") {
     // Production: route through the Polkadot host container.
     const client = await getChainAPI(CHAIN);
@@ -69,7 +71,7 @@ async function build(mode: ChainMode): Promise<ChainHandle> {
     // Dev-only: connect directly to the RPC to view real data in a browser.
     // No host means no People chain — usernames degrade to short addresses.
     raw = createClient(getWsProvider(ASSET_HUB_WS));
-    api = raw.getTypedApi(paseo_asset_hub);
+    api = raw.getTypedApi(descriptor);
   }
   // Resolve the registry address LIVE from the on-chain CDM meta-registry
   // rather than trusting the pinned snapshot address. The snapshot still
@@ -88,7 +90,7 @@ async function build(mode: ChainMode): Promise<ChainHandle> {
     // Since product-sdk 0.18, fromLiveClient returns a Result instead of
     // throwing on resolution failure. Unwrap it so the catch below still
     // wraps a failure in MetaRegistryFailure.
-    const live = await ContractManager.fromLiveClient(cdmJson as unknown as CdmJson, raw, paseo_asset_hub, {
+    const live = await ContractManager.fromLiveClient(cdmJson as unknown as CdmJson, raw, descriptor, {
       libraries: [REGISTRY_PACKAGE],
       registryAddress: REGISTRY_META_ADDRESS,
       defaultOrigin: readOrigin(),
