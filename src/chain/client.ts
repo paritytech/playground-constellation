@@ -15,7 +15,7 @@
 
 import { getChainAPI } from "@parity/product-sdk-chain-client";
 import { ContractManager, type CdmJson } from "@parity/product-sdk-contracts";
-import { summit_asset_hub } from "@parity/product-sdk-descriptors/summit-asset-hub";
+import { paseo_asset_hub } from "@parity/product-sdk-descriptors/paseo-asset-hub";
 import { ss58Encode } from "@parity/product-sdk-address";
 import { createClient, type PolkadotClient, type TypedApi } from "polkadot-api";
 import { getWsProvider } from "polkadot-api/ws";
@@ -25,7 +25,7 @@ import type { IndividualityClient } from "./peopleIdentity.ts";
 import type { QueryResult, RegistryContract } from "./registryContract.ts";
 
 export type ChainMode = "host" | "direct";
-type AssetHubApi = TypedApi<typeof summit_asset_hub>;
+type AssetHubApi = TypedApi<typeof paseo_asset_hub>;
 
 export interface ChainHandle {
   api: AssetHubApi;
@@ -69,7 +69,7 @@ async function build(mode: ChainMode): Promise<ChainHandle> {
     // Dev-only: connect directly to the RPC to view real data in a browser.
     // No host means no People chain — usernames degrade to short addresses.
     raw = createClient(getWsProvider(ASSET_HUB_WS));
-    api = raw.getTypedApi(summit_asset_hub);
+    api = raw.getTypedApi(paseo_asset_hub);
   }
   // Resolve the registry address LIVE from the on-chain CDM meta-registry
   // rather than trusting the pinned snapshot address. The snapshot still
@@ -85,11 +85,16 @@ async function build(mode: ChainMode): Promise<ChainHandle> {
   // registry (no apps). See config.ts and playground-cli/src/utils/registry.ts.
   let manager: ContractManager;
   try {
-    manager = await ContractManager.fromLiveClient(cdmJson as unknown as CdmJson, raw, summit_asset_hub, {
+    // Since product-sdk 0.18, fromLiveClient returns a Result instead of
+    // throwing on resolution failure. Unwrap it so the catch below still
+    // wraps a failure in MetaRegistryFailure.
+    const live = await ContractManager.fromLiveClient(cdmJson as unknown as CdmJson, raw, paseo_asset_hub, {
       libraries: [REGISTRY_PACKAGE],
       registryAddress: REGISTRY_META_ADDRESS,
       defaultOrigin: readOrigin(),
     });
+    if (!live.ok) throw live.error;
+    manager = live.value;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(

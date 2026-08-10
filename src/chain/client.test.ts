@@ -17,8 +17,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fromLiveClient =
   vi.fn<(...args: unknown[]) => unknown>().mockResolvedValue({
-    getContract: () => ({}),
-    getAddress: () => "0x" + "1".repeat(40),
+    ok: true,
+    value: {
+      getContract: () => ({}),
+      getAddress: () => "0x" + "1".repeat(40),
+    },
   });
 
 // A host client exposes raw/typed Asset Hub APIs plus the People-chain client.
@@ -39,8 +42,8 @@ vi.mock("polkadot-api", () => ({
   createClient: () => ({ getTypedApi: () => ({}) }),
 }));
 vi.mock("polkadot-api/ws", () => ({ getWsProvider: () => ({}) }));
-vi.mock("@parity/product-sdk-descriptors/summit-asset-hub", () => ({
-  summit_asset_hub: {},
+vi.mock("@parity/product-sdk-descriptors/paseo-asset-hub", () => ({
+  paseo_asset_hub: {},
 }));
 vi.mock("@parity/product-sdk-address", () => ({ ss58Encode: () => "5Origin" }));
 vi.mock("@parity/product-sdk-contracts", () => ({
@@ -65,18 +68,19 @@ describe("getChainHandle registry resolution", () => {
     fromLiveClient.mockClear();
   });
 
-  // Both modes must inject the address explicitly — relying on cdm.json.registry
-  // resolves the PASEO meta-registry on the summit chain, so no apps are found.
-  // getChainHandle caches per mode, so each mode triggers exactly one build().
+  // Both modes must inject the address explicitly rather than relying on
+  // cdm.json.registry, whose baked value is env-specific and may resolve the
+  // wrong network's (empty) meta-registry. getChainHandle caches per mode, so
+  // each mode triggers exactly one build().
   it.each(["direct", "host"] as const)(
-    "%s mode resolves via the summit meta-registry, not cdm.json's baked (paseo) value",
+    "%s mode resolves via the paseo meta-registry, not cdm.json's baked value",
     async (mode) => {
       await getChainHandle(mode);
 
       expect(fromLiveClient).toHaveBeenCalledTimes(1);
       expect(lastRegistryAddress()).toBe(REGISTRY_META_ADDRESS);
-      expect(lastRegistryAddress()).toBe(SUMMIT_META_REGISTRY);
-      expect(lastRegistryAddress()).not.toBe(PASEO_META_REGISTRY);
+      expect(lastRegistryAddress()).toBe(PASEO_META_REGISTRY);
+      expect(lastRegistryAddress()).not.toBe(SUMMIT_META_REGISTRY);
     },
   );
 });

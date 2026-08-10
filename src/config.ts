@@ -14,14 +14,14 @@
 // limitations under the License.
 
 /** Chain preset passed to getChainAPI (host-routed). */
-export const CHAIN = "summit" as const;
+export const CHAIN = "paseo" as const;
 
 /**
  * Asset Hub WS endpoint for the DEV-ONLY direct-RPC mode (VITE_USE_DIRECT=1),
  * used to view real data in a plain browser outside the host. The production
  * path inside Polkadot Desktop never uses this — it routes through the host.
  */
-export const ASSET_HUB_WS = "wss://summit-asset-hub-rpc.polkadot.io";
+export const ASSET_HUB_WS = "wss://paseo-asset-hub-next-rpc.polkadot.io";
 
 /**
  * Max nodes kept in the live graph. Bounds memory, the localStorage cache,
@@ -36,17 +36,16 @@ export const REGISTRY_PACKAGE =
   "@w3s/playground-registry";
 
 /**
- * Summit ("w3s") CDM meta-registry address. The meta-registry maps
- * `REGISTRY_PACKAGE` to its live on-chain address, and it is ENV-SPECIFIC:
- * paseo's is `0xf62c2ece…`, summit's is the one below. cdm.json's top-level
- * `registry` is "just whatever `cdm i` baked for one env" (currently the paseo
- * value), so reading from it on the summit chain resolves the wrong (empty)
- * meta-registry and the kiosk shows no apps. Since constellation is summit-only
- * (CHAIN above), we inject this explicitly instead — mirroring playground-cli's
- * per-env resolution. Source of truth: `@parity/cdm-env` getRegistryAddress("w3s").
+ * Paseo CDM meta-registry address. The meta-registry maps `REGISTRY_PACKAGE`
+ * to its live on-chain address, and it is ENV-SPECIFIC. cdm.json's top-level
+ * `registry` is "just whatever `cdm i` baked for one env", so reading from it
+ * on the wrong chain resolves an empty meta-registry and the kiosk shows no
+ * apps. We inject the network's meta-registry explicitly instead, mirroring
+ * playground-cli's per-env resolution. Source of truth: `@parity/cdm-env`
+ * getRegistryAddress("paseo").
  */
 export const REGISTRY_META_ADDRESS =
-  "0xa5747e60ae27f93e92019e4021abfc4957050141";
+  "0xf62c2ece29cd8df2e10040ecfa5a894a5c5d9cb0";
 
 function envList(value: string | undefined): string[] | null {
   if (!value) return null;
